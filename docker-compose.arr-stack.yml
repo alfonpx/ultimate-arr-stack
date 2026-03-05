@@ -11,7 +11,6 @@
 # Centralized Volumes   #
 #########################
 volumes:
-  gluetun-config:
   qbittorrent-config:
   sabnzbd-config:
   sonarr-config:
@@ -19,7 +18,7 @@ volumes:
   radarr-config:
   jellyfin-config:
   jellyfin-cache:
-  seerr-config:
+  jellyseerr-config:
   bazarr-config:
   pihole-etc-pihole:
   pihole-etc-dnsmasq:
@@ -28,19 +27,8 @@ volumes:
 # Networks              #
 #########################
 networks:
-  vpn-net:
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 10.8.1.0/24
   arr-stack:
-    name: arr-stack
-    driver: bridge
-    ipam:
-      config:
-        - subnet: 172.20.0.0/24
-          ip_range: 172.20.0.128/25
-          gateway: 172.20.0.1
+    external: true
 
 #########################
 # Logging               #
@@ -56,65 +44,15 @@ x-logging: &default-logging
 #########################
 services:
   # ═══════════════════════════════════════════════════════════════════════════
-  # GLUETUN - VPN gateway. Routes download traffic through your VPN provider.
-  # All services below marked "via VPN" share this network for privacy.
-  # ═══════════════════════════════════════════════════════════════════════════
-  gluetun:
-    image: qmcgaw/gluetun:v3.41
-    container_name: gluetun
-    depends_on:
-      pihole:
-        condition: service_healthy  # Wait for Pi-hole DNS before VPN connects
-    cap_add:
-      - NET_ADMIN
-    devices:
-      - /dev/net/tun:/dev/net/tun
-    volumes:
-      - gluetun-config:/gluetun
-    environment:
-      # VPN Configuration - see .env.example for provider-specific setup
-      - VPN_SERVICE_PROVIDER=${VPN_SERVICE_PROVIDER}
-      - VPN_TYPE=${VPN_TYPE}
-      - WIREGUARD_PRIVATE_KEY=${WIREGUARD_PRIVATE_KEY}
-      - WIREGUARD_ADDRESSES=${WIREGUARD_ADDRESSES}
-      - SERVER_COUNTRIES=${VPN_COUNTRIES}
-      - TZ=${TZ}
-      - DNS_ADDRESS=172.20.0.5
-      - FIREWALL_OUTBOUND_SUBNETS=${LAN_SUBNET},172.20.0.0/24,10.8.1.0/24
-    ports:
-      # Ports for services using network_mode: "service:gluetun"
-      # Enables direct local access without Traefik (http://NAS_IP:PORT)
-      - "8989:8989"   # Sonarr
-      - "7878:7878"   # Radarr
-      - "9696:9696"   # Prowlarr
-      - "8085:8085"   # qBittorrent
-      - "8082:8080"   # SABnzbd
-      - "8191:8191"   # FlareSolverr
-    networks:
-      arr-stack:
-        ipv4_address: 172.20.0.3
-      vpn-net:
-    restart: always
-    logging: *default-logging
-    healthcheck:
-      test: ["CMD", "/gluetun-entrypoint", "healthcheck"]
-      interval: 1m
-      timeout: 10s
-      retries: 3
-      start_period: 30s  # Give VPN time to establish connection
-
-  # ═══════════════════════════════════════════════════════════════════════════
   # QBITTORRENT - Torrent download client. Downloads files through VPN.
   # Access: qbit.lan | qbit.yourdomain.com | NAS_IP:8085
   # ═══════════════════════════════════════════════════════════════════════════
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:5.1.4
     container_name: qbittorrent
-    network_mode: "service:gluetun"
-    depends_on:
-      gluetun:
-        condition: service_healthy
-        restart: true
+    networks:
+      arr-stack:
+        ipv4_address: 172.20.0.10
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
@@ -123,47 +61,21 @@ services:
       - DOCKER_MODS=ghcr.io/vuetorrent/vuetorrent-lsio-mod:latest
     volumes:
       - qbittorrent-config:/config
-      - ${MEDIA_ROOT}:/data
+      - ${MEDIA_ROOT}/downloads:/downloads
     labels:
       - deunhealth.restart.on.unhealthy=true
     restart: always
     logging: *default-logging
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8085/ && wget -q --spider --timeout=5 http://www.google.com"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:8085/ && wget -q --spider --timeout=5 http://www.goorele.com"]
       interval: 2m
       timeout: 15s
       retries: 2
       start_period: 60s
-
-  # ═══════════════════════════════════════════════════════════════════════════
-  # SABNZBD - Usenet download client. Downloads via VPN for extra security.
-  # Access: sabnzbd.lan | sabnzbd.yourdomain.com | NAS_IP:8082
-  # ═══════════════════════════════════════════════════════════════════════════
-  sabnzbd:
-    image: lscr.io/linuxserver/sabnzbd:4.5.5
-    container_name: sabnzbd
-    network_mode: "service:gluetun"
-    depends_on:
-      gluetun:
-        condition: service_healthy
-        restart: true
-    environment:
-      - PUID=${PUID}
-      - PGID=${PGID}
-      - TZ=${TZ}
-    volumes:
-      - sabnzbd-config:/config
-      - ${MEDIA_ROOT}:/data
-    labels:
-      - deunhealth.restart.on.unhealthy=true
-    restart: always
-    logging: *default-logging
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8080/ && wget -q --spider --timeout=5 http://www.google.com"]
-      interval: 3m
-      timeout: 15s
-      retries: 2
-      start_period: 60s
+    ports:
+      - 8085:8085
+      - 6881:6881
+      - 6881:6881/udp
 
   # ═══════════════════════════════════════════════════════════════════════════
   # SONARR - TV show monitor. Watches for new episodes and sends to download.
@@ -172,18 +84,19 @@ services:
   sonarr:
     image: lscr.io/linuxserver/sonarr:4.0.16
     container_name: sonarr
-    network_mode: "service:gluetun"
-    depends_on:
-      gluetun:
-        condition: service_healthy
-        restart: true
+    networks:
+      arr-stack:
+        ipv4_address: 172.20.0.6
+    dns:
+      - 172.20.0.5
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TZ}
     volumes:
       - sonarr-config:/config
-      - ${MEDIA_ROOT}:/data
+      - ${MEDIA_ROOT}/tv:/tv
+      - ${MEDIA_ROOT}/downloads:/downloads
     labels:
       - deunhealth.restart.on.unhealthy=true
     restart: always
@@ -194,6 +107,8 @@ services:
       timeout: 15s
       retries: 2
       start_period: 60s
+    ports:
+      - 8989:8989
 
   # ═══════════════════════════════════════════════════════════════════════════
   # PROWLARR - Indexer manager. Finds download sources for Sonarr/Radarr.
@@ -202,11 +117,11 @@ services:
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:2.3.0
     container_name: prowlarr
-    network_mode: "service:gluetun"
-    depends_on:
-      gluetun:
-        condition: service_healthy
-        restart: true
+    networks:
+      arr-stack:
+        ipv4_address: 172.20.0.7
+    dns:
+      - 172.20.0.5
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
@@ -223,6 +138,8 @@ services:
       timeout: 15s
       retries: 2
       start_period: 60s
+    ports:
+      - 9696:9696
 
   # ═══════════════════════════════════════════════════════════════════════════
   # RADARR - Movie monitor. Watches for new movies and sends to download.
@@ -231,18 +148,21 @@ services:
   radarr:
     image: lscr.io/linuxserver/radarr:6.0.4
     container_name: radarr
-    network_mode: "service:gluetun"
-    depends_on:
-      gluetun:
-        condition: service_healthy
-        restart: true
+    networks:
+      arr-stack:
+        ipv4_address: 172.20.0.11
+    dns:
+      - 172.20.0.5
+    ports:
+      - 7878:7878
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TZ}
     volumes:
       - radarr-config:/config
-      - ${MEDIA_ROOT}:/data
+      - ${MEDIA_ROOT}/movies:/movies
+      - ${MEDIA_ROOT}/downloads:/downloads
     labels:
       - deunhealth.restart.on.unhealthy=true
     restart: always
@@ -268,14 +188,15 @@ services:
     environment:
       - TZ=${TZ}
     # Hardware transcoding (Intel Quick Sync) - remove these 4 lines if no Intel GPU
-    devices:
-      - /dev/dri:/dev/dri
+    # devices:
+      # - /dev/dri:/dev/dri
     group_add:
       - "${RENDER_GROUP_ID:-0}"  # Find ID: getent group render | cut -d: -f3
     volumes:
       - jellyfin-config:/config
       - jellyfin-cache:/cache
-      - ${MEDIA_ROOT}/media:/data/media:ro
+      - ${MEDIA_ROOT}/movies:/media/movies:ro
+      - ${MEDIA_ROOT}/tv:/media/tv:ro
     networks:
       arr-stack:
         ipv4_address: 172.20.0.4
@@ -287,6 +208,54 @@ services:
       timeout: 30s
       retries: 2
       start_period: 30s
+    # Bit about transcoding in graphics card. Make sure you have the drivers.
+    ## NVIDIA GTX 960 (Maxwell/Legacy) - Driver Setup on Ubuntu
+    #
+    # 1. Purge existing nvidia packages (if reinstalling):
+    #    sudo dpkg --purge --force-all libnvidia-extra
+    #    sudo apt remove --purge nvidia-* libnvidia-*
+    #    sudo apt autoremove
+    #    sudo reboot
+    #
+    # 2. Install driver (580 is the correct legacy branch for GTX 960):
+    #    sudo apt install nvidia-driver-580
+    #    sudo apt --fix-broken install   # if there are dependency errors
+    #    sudo reboot
+    #
+    # 3. Verify driver loaded:
+    #    nvidia-smi
+    # Thu Mar  5 19:55:43 2026       
+    # +-----------------------------------------------------------------------------------------+
+    # | NVIDIA-SMI 580.126.16             Driver Version: 580.126.16     CUDA Version: 13.0     |
+    # +-----------------------------------------+------------------------+----------------------+
+    # | GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+    # | Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+    # |                                         |                        |               MIG M. |
+    # |=========================================+========================+======================|
+    # |   0  NVIDIA GeForce GTX 960         On  |   00000000:01:00.0 Off |                  N/A |
+    # | 35%   26C    P8             13W /  120W |      16MiB /   2048MiB |      0%      Default |
+    # |                                         |                        |                  N/A |
+    # +-----------------------------------------+------------------------+----------------------+
+    #
+    #
+    # 4. Install NVIDIA Container Toolkit:
+    #    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+    #    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+    #      sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+    #      sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+    #    sudo apt update && sudo apt install nvidia-container-toolkit
+    #
+    # 5. Configure Docker and restart:
+    #    sudo nvidia-ctk runtime configure --runtime=docker
+    #    sudo systemctl restart docker
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   # ═══════════════════════════════════════════════════════════════════════════
   # PI-HOLE - DNS server. Enables .lan domains and blocks ads network-wide.
@@ -294,7 +263,7 @@ services:
   # For: Home Pro + Anywhere setups
   # ═══════════════════════════════════════════════════════════════════════════
   pihole:
-    image: pihole/pihole:2026.02.0
+    image: pihole/pihole:2025.11.1
     container_name: pihole
     ports:
       - "${NAS_IP}:53:53/tcp"  # Bind to NAS IP (not 0.0.0.0) to avoid conflict with host dnsmasq on 127.0.0.1:53
@@ -323,19 +292,14 @@ services:
       start_period: 30s
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # SEERR (formerly Jellyseerr) - Request portal. Users request movies/shows here.
-  # Access: seerr.lan | seerr.yourdomain.com | NAS_IP:5055
+  # JELLYSEERR - Request portal. Users request movies/shows here.
+  # Access: jellyseerr.lan | jellyseerr.yourdomain.com | NAS_IP:5055
   # ═══════════════════════════════════════════════════════════════════════════
-  seerr:
-    image: ghcr.io/seerr-team/seerr:v3.1.0
-    init: true
-    container_name: seerr
-    depends_on:
-      gluetun:
-        condition: service_healthy  # Needs gluetun to reach Sonarr/Radarr
-        restart: true
+  jellyseerr:
+    image: fallenbagel/jellyseerr:2.7
+    container_name: jellyseerr
     ports:
-      - "5055:5055"
+      - "5055:5055"  # Local network access (all interfaces)
     environment:
       - LOG_LEVEL=info
       - TZ=${TZ}
@@ -344,29 +308,24 @@ services:
       arr-stack:
         ipv4_address: 172.20.0.8
     volumes:
-      - seerr-config:/app/config
+      - jellyseerr-config:/app/config
     restart: always
     logging: *default-logging
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5055/api/v1/status"]
+      test: ["CMD", "wget", "--spider", "http://localhost:5055/api/v1/status"]
       interval: 2m
       timeout: 10s
       retries: 3
-      start_period: 20s
 
   # ═══════════════════════════════════════════════════════════════════════════
   # BAZARR - Subtitle manager. Automatically downloads subtitles.
   # Access: bazarr.lan | bazarr.yourdomain.com | NAS_IP:6767
   # ═══════════════════════════════════════════════════════════════════════════
   bazarr:
-    image: lscr.io/linuxserver/bazarr:1.5.5
+    image: lscr.io/linuxserver/bazarr:v1.5.5-ls338
     container_name: bazarr
-    depends_on:
-      gluetun:
-        condition: service_healthy  # Needs gluetun to reach Sonarr/Radarr
-        restart: true
     ports:
-      - "6767:6767"
+      - "6767:6767"  # Local network access
     environment:
       - PUID=${PUID}
       - PGID=${PGID}
@@ -376,7 +335,8 @@ services:
         ipv4_address: 172.20.0.9
     volumes:
       - bazarr-config:/config
-      - ${MEDIA_ROOT}/media:/data/media
+      - ${MEDIA_ROOT}/movies:/movies
+      - ${MEDIA_ROOT}/tv:/tv
     restart: always
     logging: *default-logging
     healthcheck:
@@ -384,34 +344,33 @@ services:
       interval: 3m
       timeout: 10s
       retries: 2
-      start_period: 60s
 
   # ═══════════════════════════════════════════════════════════════════════════
   # FLARESOLVERR - Cloudflare bypass. Helps Prowlarr access protected sites.
-  # Runs behind Gluetun VPN so solved cookies match Prowlarr's exit IP.
-  # No web UI. Used internally by Prowlarr at localhost:8191
+  # No web UI. Used internally by Prowlarr at 172.20.0.10:8191
   # ═══════════════════════════════════════════════════════════════════════════
   flaresolverr:
     image: ghcr.io/flaresolverr/flaresolverr:v3.4.6
     container_name: flaresolverr
-    network_mode: "service:gluetun"
-    depends_on:
-      gluetun:
-        condition: service_healthy
     environment:
       - LOG_LEVEL=info
       - TZ=${TZ}
+    networks:
+      arr-stack:
+        ipv4_address: 172.20.0.12
+    dns:
+      - 172.20.0.5
+    ports:
+      - 8191:8191
     labels:
       - deunhealth.restart.on.unhealthy=true
     restart: always
     logging: *default-logging
     healthcheck:
-      # Actually test Chrome by making a solve request (catches Chrome crashes)
       test: ["CMD", "curl", "-sf", "-X", "POST", "-H", "Content-Type: application/json",
              "-d", "{\"cmd\":\"request.get\",\"url\":\"http://localhost:8191/\",\"maxTimeout\":30000}",
              "http://localhost:8191/v1"]
       interval: 10m
       timeout: 60s
       retries: 2
-      start_period: 60s
-
+      start_period: 2m
