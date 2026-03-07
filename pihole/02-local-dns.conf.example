@@ -4,14 +4,12 @@
 #
 # Usage (on NAS):
 #   sed "s/TRAEFIK_LAN_IP/10.10.0.11/g" pihole/02-local-dns.conf.example > pihole/02-local-dns.conf
-#   docker restart pihole
+#   docker exec pihole pihole reloaddns
 #
 # Note: Replace 10.10.0.11 with your chosen TRAEFIK_LAN_IP
-# Note: `pihole reloaddns` does NOT pick up bind-mount changes — use `docker restart pihole`
 
 # Media services
 address=/jellyfin.lan/TRAEFIK_LAN_IP
-address=/seerr.lan/TRAEFIK_LAN_IP
 address=/jellyseerr.lan/TRAEFIK_LAN_IP
 address=/jellyseer.lan/TRAEFIK_LAN_IP
 
@@ -33,3 +31,6 @@ address=/pihole.lan/TRAEFIK_LAN_IP
 address=/uptime.lan/TRAEFIK_LAN_IP
 address=/duc.lan/TRAEFIK_LAN_IP
 address=/beszel.lan/TRAEFIK_LAN_IP
+
+# Direct IP (not routed via Traefik)
+address=/flaresolverr.lan/172.20.0.10
