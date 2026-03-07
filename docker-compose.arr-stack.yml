@@ -22,6 +22,7 @@ volumes:
   bazarr-config:
   pihole-etc-pihole:
   pihole-etc-dnsmasq:
+  homarr-appdata:
 
 #########################
 # Networks              #
@@ -374,3 +375,21 @@ services:
       timeout: 60s
       retries: 2
       start_period: 2m
+
+  #---------------------------------------------------------------------#
+  #     Homarr - A simple, yet powerful dashboard for your server.      #
+  #---------------------------------------------------------------------#
+  homarr:
+    container_name: homarr
+    image: ghcr.io/homarr-labs/homarr:latest
+    restart: always
+    networks:
+      arr-stack:
+        ipv4_address: 172.20.0.13
+    volumes:
+      - homarr-appdata:/appdata
+    environment:
+      - SECRET_ENCRYPTION_KEY=28c3aea16014e003c6ff59ade6dbd16096021c4fc82c8b1f9195f2be8e29898c
+    ports:
+      - '7575:7575'
+    logging: *default-logging
