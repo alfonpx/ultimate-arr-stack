@@ -18,10 +18,10 @@ volumes:
   radarr-config:
   jellyfin-config:
   jellyfin-cache:
-  jellyseerr-config:
   bazarr-config:
   pihole-etc-pihole:
   pihole-etc-dnsmasq:
+  seerr-config:
 
 #########################
 # Networks              #
@@ -195,8 +195,8 @@ services:
     volumes:
       - jellyfin-config:/config
       - jellyfin-cache:/cache
-      - ${MEDIA_ROOT}/movies:/media/movies:ro
-      - ${MEDIA_ROOT}/tv:/media/tv:ro
+      - ${MEDIA_ROOT}/movies:/media/movies
+      - ${MEDIA_ROOT}/tv:/media/tv
     networks:
       arr-stack:
         ipv4_address: 172.20.0.4
@@ -291,31 +291,6 @@ services:
       retries: 2
       start_period: 30s
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # JELLYSEERR - Request portal. Users request movies/shows here.
-  # Access: jellyseerr.lan | jellyseerr.yourdomain.com | NAS_IP:5055
-  # ═══════════════════════════════════════════════════════════════════════════
-  jellyseerr:
-    image: fallenbagel/jellyseerr:2.7
-    container_name: jellyseerr
-    ports:
-      - "5055:5055"  # Local network access (all interfaces)
-    environment:
-      - LOG_LEVEL=info
-      - TZ=${TZ}
-      - PORT=5055
-    networks:
-      arr-stack:
-        ipv4_address: 172.20.0.8
-    volumes:
-      - jellyseerr-config:/app/config
-    restart: always
-    logging: *default-logging
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "http://localhost:5055/api/v1/status"]
-      interval: 2m
-      timeout: 10s
-      retries: 3
 
   # ═══════════════════════════════════════════════════════════════════════════
   # BAZARR - Subtitle manager. Automatically downloads subtitles.
@@ -374,3 +349,31 @@ services:
       timeout: 60s
       retries: 2
       start_period: 2m
+
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SEERR
+  # ═══════════════════════════════════════════════════════════════════════════
+  seerr:
+    image: ghcr.io/seerr-team/seerr:v3.1.0
+    container_name: seerr
+    init: true
+    ports:
+      - "5055:5055"
+    environment:
+      - LOG_LEVEL=info
+      - TZ=${TZ}
+      - PORT=5055
+    networks:
+      arr-stack:
+        ipv4_address: 172.20.0.13
+    volumes:
+      - seerr-config:/app/config
+    restart: always
+    logging: *default-logging
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5055/api/v1/status"]
+      start_period: 20s
+      timeout: 3s
+      interval: 15s
+      retries: 3
