@@ -22,7 +22,6 @@ volumes:
   bazarr-config:
   pihole-etc-pihole:
   pihole-etc-dnsmasq:
-  homarr-appdata:
 
 #########################
 # Networks              #
