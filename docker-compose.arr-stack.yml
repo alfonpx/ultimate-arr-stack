@@ -200,6 +200,9 @@ services:
     networks:
       arr-stack:
         ipv4_address: 172.20.0.4
+    depends_on:
+      seerr:
+        condition: service_healthy
     restart: always
     logging: *default-logging
     healthcheck:
